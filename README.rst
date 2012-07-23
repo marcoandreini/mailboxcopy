@@ -22,9 +22,11 @@ Installation
 
 You can use virtualenv in order to setup this application::
 
-  virtualenv --no-site-packages mailboxcopy
-  . mailboxcopy/bin/activate
-  cd src
+  virtualenv --no-site-packages mailboxcopyenv
+  . mailboxcopyenv/bin/activate
+
+Single command, using distribute/pip/... ::
+
   python setup.py install
 
 Help command line parameters are provided with the -h or --help parameter.
