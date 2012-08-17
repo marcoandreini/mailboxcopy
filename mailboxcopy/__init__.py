@@ -1,4 +1,4 @@
-# -*- coding: utf8 -*-
+# -*- coding: utf-8 -*-
 #
 # Copyright (C) 2012 Marco Andreini
 #
@@ -287,7 +287,7 @@ def main():
 
                 try:
                     dst_sizes[dst_header.size].append(dst_header.id)
-                except Exception:
+                except KeyError:
                     dst_sizes[dst_header.size] = [dst_header.id]
 
         msg_copied = 0
