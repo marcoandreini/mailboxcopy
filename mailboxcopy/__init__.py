@@ -229,7 +229,7 @@ def main():
     parser.add_argument("-d", "--dry-run", action="store_true",  dest="dry_run",
                         help="dry run, create folders only")
     parser.add_argument("-x", "--exclude", action="append",
-                        help="exclude folder(s)")
+                        help="exclude folder(s)", default=[])
     parser.add_argument("-l", "--limit-size", dest="limit_size", type=int,
                         help="skip messages with size greater")
     parser.add_argument("-b", "--buffer-size", dest="buffer_size", type=int, default=10,
