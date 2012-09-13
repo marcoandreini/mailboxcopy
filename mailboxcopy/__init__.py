@@ -136,7 +136,11 @@ class MessageParser:
         """
 
         data = dict((k.replace('"', ''), v) for k, v in data.items())
-        return MessageHeader(id=self.header_parser.parsestr(data[HEADERS]).get(MESSAGE_ID).strip(),
+        msgId = self.header_parser.parsestr(data[HEADERS]).get(MESSAGE_ID)
+        if msgId is None:
+            logging.warn("message-id is empty for %s", data[HEADERS])
+            msgId = ''
+        return MessageHeader(id=msgId.strip(),
                              size=data[RFC822_SIZE])
 
     def message(self, folder, msgid, data):
@@ -219,58 +223,79 @@ def main():
     message_parser = MessageParser()
     pre_data = [HEADERS, RFC822_SIZE, INTERNALDATE]
 
-    folder_mapping = {'INBOX/Sent': 'Sent'}
-
     parser = argparse.ArgumentParser(description="imap mailbox copy")
-    parser.add_argument("-v", "--verbose", action="store_true",
+    parser.add_argument("-v", "--verbose", action="count",
                         help="increase output verbosity")
     parser.add_argument("-t", "--test", action=TestAction,
                         help="run doctest and exit")
     parser.add_argument("-d", "--dry-run", action="store_true",  dest="dry_run",
-                        help="dry run, create folders only")
-    parser.add_argument("-x", "--exclude", action="append",
-                        help="exclude folder(s)", default=[])
+                        help="dry run")
+    parser.add_argument("-x", "--exclude", action="append", default=[],
+                        help="exclude folder(s)")
     parser.add_argument("-l", "--limit-size", dest="limit_size", type=int,
                         help="skip messages with size greater")
     parser.add_argument("-b", "--buffer-size", dest="buffer_size", type=int, default=10,
                         help="read buffer size before async write, in number of messages")
+    parser.add_argument("-m", "--mapping", action="append", default=[],
+                        help="add a folder mapping (eg. srcfolderA:dstfolderB)")
+    parser.add_argument("-e", "--exclude-empty", action="store_true", dest="exclude_empty",
+                        help="exclude empty folders")
+    # TODO: destination sync
+    # parser.add_argument("--delete-after", action="store_true", dest="delete_after",
+    #                     help="delete messages that have been removed from the source folders")
     parser.add_argument("source", help="source, like imap://marco:passwd@sitename.it/INBOX")
     parser.add_argument("destination", help="destination, like imaps://ma:mypasswd@othersitename.it/")
     args = parser.parse_args()
 
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level={0: logging.WARN, 1:logging.INFO, 2:logging.DEBUG}.get(args.verbose, logging.DEBUG))
 
     is_excluded = ExcludeList(args.exclude)
+
+    folder_mapping = {'INBOX/Sent': 'Sent'}
+    for mapping in args.mapping:
+        src, dst = mapping.split(':', 2)
+        folder_mapping[src] = dst
 
     executor = futures.ThreadPoolExecutor(1)
     source = IMAPClientExt(args.source, executor, args.buffer_size)
     destination = IMAPClientExt(args.destination, executor, args.buffer_size)
+    dst_delimiter = destination.get_folder_delimiter()
     bytes_total = 0
     for folder in source.list_folders():
         delimiter = folder[1]
         src_name = folder[2]
-        if is_excluded(src_name if delimiter == '/' else src_name.replace(delimiter, '/')):
+        normalized_src_name = src_name if delimiter == '/' else src_name.replace(delimiter, '/')
+        if is_excluded(normalized_src_name):
             logging.info("skipped source folder %s", src_name)
             continue
 
         logging.debug("processing source folder %s", src_name)
         source.select_folder(src_name, readonly=True)
-        dst_name = folder_mapping[src_name] if folder_mapping.has_key(src_name) else src_name
+        # async fetch
+        src_result = source.fetch_all(pre_data)
+
+        dst_name = None
+        for fkey, fvalue in folder_mapping.items():
+            if normalized_src_name.startswith(fkey):
+                dst_name = normalized_src_name.replace(fkey, fvalue)
+        if dst_name is None:
+            dst_name = normalized_src_name
+        dst_name = dst_name if dst_delimiter == '/' else dst_name.replace('/', dst_delimiter)
         dst_exists = destination.folder_exists(dst_name)
         if not dst_exists:
             logging.debug("folder %s not exists in destination", dst_name)
+            if args.exclude_empty and len(src_result) == 0:
+                # XXX: check if no child folders...
+                logging.debug("%s is empty, skipped as required", src_name)
+                continue
             if not args.dry_run:
                 res = destination.create_folder(dst_name)
                 logging.debug("created destination folder %s", res)
         if dst_exists:
             destination.select_folder(dst_name)
 
-        src_result = source.fetch_all(pre_data)
         if len(src_result) == 0:
-            logging.debug("%s is empty, skipped", src_name)
+            logging.debug("no messages in source / %s", src_name)
             continue
         else:
             logging.debug("found %d messages in source / %s", len(src_result), src_name)
